@@ -106,6 +106,48 @@ test('GET /sample: banned left turn makes the detour strictly longer', async () 
   assert.equal(json.comparison.delta, 4);
 });
 
+test('two bans on the same approach both apply via /shortest-path and /compare', async () => {
+  // 直接拿 GET /sample 返回的 graph 原样作为输入：
+  // (B,E,F) 与 (B,E,H) 同时生效后只能绕外圈，长度 12，delta 8。
+  const sampleRes = await fetch(`${baseUrl}/sample`);
+  const sample: any = await sampleRes.json();
+  const body = {
+    graph: sample.graph,
+    source: 'A',
+    target: 'I',
+    restrictions: [
+      { from: 'B', via: 'E', to: 'F' },
+      { from: 'B', via: 'E', to: 'H' },
+    ],
+  };
+  const bannedTriples = new Set(body.restrictions.map((r) => JSON.stringify([r.from, r.via, r.to])));
+
+  const sp = await post('/shortest-path', body);
+  assert.equal(sp.status, 200);
+  assert.deepEqual(sp.json, {
+    source: 'A',
+    target: 'I',
+    reachable: true,
+    distance: 12,
+    path: ['A', 'D', 'G', 'H', 'I'],
+  });
+  for (let i = 1; i + 1 < sp.json.path.length; i++) {
+    assert.ok(
+      !bannedTriples.has(JSON.stringify([sp.json.path[i - 1], sp.json.path[i], sp.json.path[i + 1]])),
+      `shortest-path result uses a banned turn: ${JSON.stringify(sp.json.path)}`,
+    );
+  }
+
+  const cmp = await post('/compare', body);
+  assert.equal(cmp.status, 200);
+  assert.equal(cmp.json.withRestrictions.reachable, true);
+  assert.equal(cmp.json.withRestrictions.distance, 12);
+  assert.deepEqual(cmp.json.withRestrictions.path, ['A', 'D', 'G', 'H', 'I']);
+  assert.equal(cmp.json.withoutRestrictions.distance, 4);
+  assert.deepEqual(cmp.json.withoutRestrictions.path, ['A', 'B', 'E', 'F', 'I']);
+  assert.equal(cmp.json.delta, 8);
+});
+
 test('invalid inputs are rejected with 400 and a reason', async () => {
   const cases: Array<[string, unknown, RegExp]> = [
     ['unknown node in edge', { ...diamond, graph: { nodes: ['a'], edges: [{ from: 'a', to: 'b', weight: 1 }] } }, /unknown node "b"/],

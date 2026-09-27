@@ -14,17 +14,27 @@ export interface TurnRestriction {
 }
 
 export class RestrictionSet {
-  /** 进入方向 (from→via) → 该方向上被禁止拐上的出口节点。 */
-  private readonly banned = new Map<string, NodeId>();
+  /** 进入方向 (from→via) → 该方向上所有被禁止拐上的出口节点。 */
+  private readonly banned = new Map<string, Set<NodeId>>();
 
   constructor(restrictions: TurnRestriction[] = []) {
     for (const r of restrictions) {
-      this.banned.set(approachKey(r.from, r.via), r.to);
+      const key = approachKey(r.from, r.via);
+      let exits = this.banned.get(key);
+      if (exits === undefined) {
+        exits = new Set<NodeId>();
+        this.banned.set(key, exits);
+      }
+      // 同一进入方向上可以禁掉多个出口；重复规则自然去重，不会互相覆盖。
+      exits.add(r.to);
     }
   }
 
+  /** 生效中的（去重后的）禁转向条数。 */
   get size(): number {
-    return this.banned.size;
+    let n = 0;
+    for (const exits of this.banned.values()) n += exits.size;
+    return n;
   }
 
   /**
@@ -33,7 +43,7 @@ export class RestrictionSet {
    */
   isTurnAllowed(inEdge: Edge | null, outEdge: Edge): boolean {
     if (inEdge === null) return true;
-    return this.banned.get(approachKey(inEdge.from, outEdge.from)) !== outEdge.to;
+    return !this.banned.get(approachKey(inEdge.from, outEdge.from))?.has(outEdge.to);
   }
 }
 
